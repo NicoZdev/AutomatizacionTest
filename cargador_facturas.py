@@ -1,443 +1,219 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
-import PyPDF2
+import pdfplumber
 import re
-from datetime import datetime
 import pandas as pd
 import os
-from pathlib import Path
-import logging
-
-# Configuración de logs
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('carga_facturas.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+import threading
 
 class ExtractorFacturas:
-    """Clase para extraer datos de facturas C y notas de crédito C"""
-    
     def __init__(self):
         self.patrones = {
-            'fecha': r'(\d{2}/\d{2}/\d{4})',
-            'cuit': r'CUIT[:\s]*(\d{2}-?\d{8}-?\d{1})',
-            'importe_total': r'(?:TOTAL|Importe Total)[:\s]*\$?\s*([\d.,]+)',
-            'neto_gravado': r'(?:Neto Gravado|Subtotal)[:\s]*\$?\s*([\d.,]+)',
-            'iva': r'IVA(?:\s+21%)?[:\s]*\$?\s*([\d.,]+)',
-            'punto_venta': r'Pto\.?\s*Venta[:\s]*(\d+)',
-            'nro_comprobante': r'Nro(?:\s+)?(?:de\s+)?(?:Comp\.?|Comprobante)[:\s]*(\d+)',
-            'tipo_comprobante': r'(FACTURA C|NOTA DE CREDITO C|FACTURA "C"|NOTA DE CREDITO "C")',
-            'condicion_iva': r'(Monotributo|Consumidor Final|Responsable Inscripto|Exento)'
+            'fecha': r'Fecha\s*de\s*Emisi[oó]n[:\s]*(\d{2}/\d{2}/\d{4})',
+            'nro': r'Comp\.\s*Nro[:\s]*(\d{1,8})',
+            'cae': r'CAE\s*N[°º]?[:\s]*(\d{14})',
+            'importe': r'Importe\s*Total[:\s]*\$?\s*([\d\.]+,\d{2})',
+            'condicion_venta': r'Condici[oó]n\s*de\s*venta[:\s]*(.*?)(?:\n|$)',
         }
-    
-    def limpiar_numero(self, texto):
-        """Limpia un string para convertirlo a número"""
-        if not texto:
-            return 0.0
-        texto = texto.replace('$', '').replace('.', '').replace(',', '.')
+
+    def limpiar_importe(self, texto):
+        if not texto: return 0.0
         try:
-            return float(texto)
-        except:
-            return 0.0
-    
+            limpio = texto.replace('$', '').replace('.', '').replace(',', '.').strip()
+            return float(limpio)
+        except: return 0.0
+
     def extraer_datos(self, ruta_pdf):
-        """Extrae datos de un PDF de factura"""
         datos = {
-            'archivo': os.path.basename(ruta_pdf),
-            'tipo_comprobante': '',
-            'fecha_emision': '',
-            'cuit_emisor': '',
-            'cuit_cliente': '',
-            'punto_venta': '',
-            'numero_comprobante': '',
-            'importe_total': 0.0,
-            'neto_gravado': 0.0,
-            'iva': 0.0,
-            'condicion_iva': '',
-            'estado': 'OK'
+            'fecha': '', 'comp_nro': '', 'cliente': 'Consumidor Final',
+            'tipo': 'Factura C', 'servicio': 'Sesión de T.O', 'importe': 0.0,
+            'cae': '', 'estado': '', 'condicion_venta': '',
+            'archivo_pdf': os.path.basename(ruta_pdf),
+            'notas': ''
         }
-        
         try:
-            with open(ruta_pdf, 'rb') as file:
-                reader = PyPDF2.PdfReader(file)
-                texto_completo = ''
+            with pdfplumber.open(ruta_pdf) as pdf:
+                texto = pdf.pages[0].extract_text()
                 
-                for page in reader.pages:
-                    texto_completo += page.extract_text() + '\n'
-                
-                texto_completo = texto_completo.upper()
-                
-                # Extraer tipo de comprobante
-                match = re.search(self.patrones['tipo_comprobante'], texto_completo)
-                if match:
-                    datos['tipo_comprobante'] = match.group(1).replace('"', '')
-                
-                # Extraer fecha
-                match = re.search(self.patrones['fecha'], texto_completo)
-                if match:
-                    datos['fecha_emision'] = match.group(1)
-                
-                # Extraer CUITs (generalmente hay 2: emisor y cliente)
-                cuits = re.findall(self.patrones['cuit'], texto_completo)
-                if len(cuits) >= 1:
-                    datos['cuit_emisor'] = cuits[0].replace('-', '')
-                if len(cuits) >= 2:
-                    datos['cuit_cliente'] = cuits[1].replace('-', '')
-                
-                # Extraer punto de venta
-                match = re.search(self.patrones['punto_venta'], texto_completo)
-                if match:
-                    datos['punto_venta'] = match.group(1)
-                
-                # Extraer número de comprobante
-                match = re.search(self.patrones['nro_comprobante'], texto_completo)
-                if match:
-                    datos['numero_comprobante'] = match.group(1)
-                
-                # Extraer importes
-                match = re.search(self.patrones['importe_total'], texto_completo)
-                if match:
-                    datos['importe_total'] = self.limpiar_numero(match.group(1))
-                
-                match = re.search(self.patrones['neto_gravado'], texto_completo)
-                if match:
-                    datos['neto_gravado'] = self.limpiar_numero(match.group(1))
-                
-                match = re.search(self.patrones['iva'], texto_completo)
-                if match:
-                    datos['iva'] = self.limpiar_numero(match.group(1))
-                
-                # Extraer condición IVA
-                match = re.search(self.patrones['condicion_iva'], texto_completo)
-                if match:
-                    datos['condicion_iva'] = match.group(1)
-                
-                logger.info(f"Datos extraídos de {datos['archivo']}: {datos}")
-                
+                if "NOTA DE CRÉDITO" in texto.upper():
+                    datos['tipo'] = "Nota de Crédito C"
+                    asociado = re.search(r'Fac\.\s*C[:\s]*\d{5}-(\d{8})', texto)
+                    if asociado: datos['notas'] = asociado.group(1)
+                else:
+                    datos['tipo'] = "Factura C"
+
+                m_fecha = re.search(self.patrones['fecha'], texto)
+                if m_fecha: datos['fecha'] = m_fecha.group(1)
+
+                m_nro = re.search(self.patrones['nro'], texto)
+                if m_nro: datos['comp_nro'] = m_nro.group(1).zfill(8)
+
+                bloque_cliente = re.search(r'Apellido y Nombre / Razón Social:(.*?)Domicilio:', texto, re.S)
+                if bloque_cliente:
+                    nombre = bloque_cliente.group(1).replace('\n', ' ').strip()
+                    nombre = re.split(r'Condici[oó]n|CUIT', nombre, flags=re.I)[0].strip()
+                    if len(nombre) > 2: datos['cliente'] = " ".join(nombre.split()).upper()
+
+                m_imp = re.search(self.patrones['importe'], texto)
+                if m_imp: datos['importe'] = self.limpiar_importe(m_imp.group(1))
+
+                m_cae = re.search(self.patrones['cae'], texto)
+                if m_cae: datos['cae'] = m_cae.group(1)
+
+                m_cond = re.search(self.patrones['condicion_venta'], texto)
+                if m_cond:
+                    metodo = m_cond.group(1).strip()
+                    datos['condicion_venta'] = re.split(r'Fac\.\s*C', metodo, flags=re.I)[0].strip()
+
         except Exception as e:
-            datos['estado'] = f'ERROR: {str(e)}'
-            logger.error(f"Error extrayendo {ruta_pdf}: {str(e)}")
-        
+            datos['cliente'] = f"Error: {str(e)}"
         return datos
 
-
 class AplicacionCargador:
-    """Aplicación gráfica para cargar facturas"""
-    
     def __init__(self, root):
         self.root = root
-        self.root.title("Cargador de Facturas - Monotributo Argentina")
+        self.root.title("Cargador Contable Pro - v4.0")
         self.root.geometry("900x700")
-        self.root.configure(bg='#f0f0f0')
+        self.root.minsize(800, 600)
+        self.root.configure(bg='#f8f9fa')
         
         self.pdfs_seleccionados = []
         self.archivo_excel = ""
         self.extractor = ExtractorFacturas()
         
+        # Hacer que la ventana sea responsiva
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+        
         self.crear_interfaz()
-    
+
     def crear_interfaz(self):
-        """Crea la interfaz gráfica"""
-        # Frame superior
-        frame_superior = tk.Frame(self.root, bg='#2c3e50', height=80)
-        frame_superior.pack(fill=tk.X, padx=0, pady=0)
+        # Contenedor principal con padding
+        self.main = tk.Frame(self.root, bg='#f8f9fa', padx=30, pady=30)
+        self.main.grid(sticky="nsew")
+        self.main.columnconfigure(0, weight=1) # Centrado de contenido
+
+        # Título
+        lbl_titulo = tk.Label(self.main, text="Gestión Automática de Facturas", 
+                              font=("Segoe UI", 18, "bold"), bg='#f8f9fa', fg='#2c3e50')
+        lbl_titulo.grid(row=0, column=0, pady=(0, 20))
+
+        # --- SECCIÓN EXCEL ---
+        frame_excel = tk.LabelFrame(self.main, text=" 1. Destino de datos ", font=("Segoe UI", 10, "bold"), bg='#f8f9fa', padx=15, pady=15)
+        frame_excel.grid(row=1, column=0, sticky="ew", pady=10)
+        frame_excel.columnconfigure(0, weight=1)
+
+        self.btn_excel = tk.Button(frame_excel, text="Seleccionar Archivo Excel", command=self.seleccionar_excel,
+                                   bg='#4a90e2', fg='white', font=("Segoe UI", 10), relief='flat', cursor='hand2', padx=20)
+        self.btn_excel.grid(row=0, column=0)
         
-        titulo = tk.Label(
-            frame_superior, 
-            text="📄 CARGADOR DE FACTURAS C",
-            font=('Arial', 18, 'bold'),
-            bg='#2c3e50',
-            fg='white'
-        )
-        titulo.pack(pady=20)
+        self.lbl_ex = tk.Label(frame_excel, text="Ningún Excel seleccionado", bg='#f8f9fa', fg='#7f8c8d', font=("Segoe UI", 9, "italic"))
+        self.lbl_ex.grid(row=1, column=0, pady=(5,0))
+
+        # --- SECCIÓN PDF ---
+        frame_pdf = tk.LabelFrame(self.main, text=" 2. Comprobantes PDF ", font=("Segoe UI", 10, "bold"), bg='#f8f9fa', padx=15, pady=15)
+        frame_pdf.grid(row=2, column=0, sticky="nsew", pady=10)
+        frame_pdf.columnconfigure(0, weight=1)
+        frame_pdf.rowconfigure(1, weight=1)
+
+        self.btn_pdf = tk.Button(frame_pdf, text="+ Agregar Facturas", command=self.seleccionar_pdfs,
+                                 bg='#27ae60', fg='white', font=("Segoe UI", 10), relief='flat', cursor='hand2', padx=20)
+        self.btn_pdf.grid(row=0, column=0, pady=(0,10))
         
-        subtítulo = tk.Label(
-            frame_superior,
-            text="Para Monotributistas en Argentina",
-            font=('Arial', 10),
-            bg='#2c3e50',
-            fg='#bdc3c7'
-        )
-        subtítulo.pack()
-        
-        # Frame principal
-        frame_principal = tk.Frame(self.root, bg='#f0f0f0')
-        frame_principal.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-        
-        # Sección de selección de PDFs
-        frame_pdfs = tk.LabelFrame(
-            frame_principal, 
-            text="📁 Archivos PDF a procesar",
-            font=('Arial', 12, 'bold'),
-            bg='#f0f0f0',
-            padx=10,
-            pady=10
-        )
-        frame_pdfs.pack(fill=tk.X, pady=(0, 10))
-        
-        btn_seleccionar_pdfs = tk.Button(
-            frame_pdfs,
-            text="Seleccionar PDFs",
-            command=self.seleccionar_pdfs,
-            bg='#3498db',
-            fg='white',
-            font=('Arial', 11, 'bold'),
-            cursor='hand2',
-            width=20
-        )
-        btn_seleccionar_pdfs.pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.lbl_cantidad_pdfs = tk.Label(
-            frame_pdfs,
-            text="0 archivos seleccionados",
-            font=('Arial', 10),
-            bg='#f0f0f0'
-        )
-        self.lbl_cantidad_pdfs.pack(side=tk.LEFT)
-        
-        btn_limpiar_pdfs = tk.Button(
-            frame_pdfs,
-            text="Limpiar",
-            command=self.limpiar_pdfs,
-            bg='#e74c3c',
-            fg='white',
-            font=('Arial', 10),
-            cursor='hand2',
-            width=10
-        )
-        btn_limpiar_pdfs.pack(side=tk.RIGHT)
-        
-        # Lista de PDFs
-        frame_lista = tk.Frame(frame_principal, bg='white', relief=tk.SUNKEN, bd=1)
-        frame_lista.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        
-        self.lista_pdfs = tk.Listbox(
-            frame_lista,
-            font=('Courier', 9),
-            selectbackground='#3498db',
-            selectforeground='white'
-        )
-        scrollbar = tk.Scrollbar(frame_lista, orient=tk.VERTICAL, command=self.lista_pdfs.yview)
-        self.lista_pdfs.configure(yscrollcommand=scrollbar.set)
-        
-        self.lista_pdfs.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Sección de selección de Excel
-        frame_excel = tk.LabelFrame(
-            frame_principal,
-            text="📊 Archivo Excel de destino",
-            font=('Arial', 12, 'bold'),
-            bg='#f0f0f0',
-            padx=10,
-            pady=10
-        )
-        frame_excel.pack(fill=tk.X, pady=(0, 10))
-        
-        btn_seleccionar_excel = tk.Button(
-            frame_excel,
-            text="Seleccionar Excel",
-            command=self.seleccionar_excel,
-            bg='#2ecc71',
-            fg='white',
-            font=('Arial', 11, 'bold'),
-            cursor='hand2',
-            width=20
-        )
-        btn_seleccionar_excel.pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.lbl_archivo_excel = tk.Label(
-            frame_excel,
-            text="Ningún archivo seleccionado",
-            font=('Arial', 10),
-            bg='#f0f0f0',
-            wraplength=500
-        )
-        self.lbl_archivo_excel.pack(side=tk.LEFT)
-        
-        # Barra de progreso
-        frame_progreso = tk.Frame(frame_principal, bg='#f0f0f0')
-        frame_progreso.pack(fill=tk.X, pady=(0, 10))
-        
-        self.barra_progreso = ttk.Progressbar(
-            frame_progreso,
-            mode='determinate',
-            length=600
-        )
-        self.barra_progreso.pack(fill=tk.X)
-        
-        self.lbl_progreso = tk.Label(
-            frame_progreso,
-            text="",
-            font=('Arial', 9),
-            bg='#f0f0f0'
-        )
-        self.lbl_progreso.pack()
-        
-        # Botón de carga
-        btn_cargar = tk.Button(
-            frame_principal,
-            text="⚡ CARGAR DATOS ⚡",
-            command=self.cargar_datos,
-            bg='#e67e22',
-            fg='white',
-            font=('Arial', 14, 'bold'),
-            cursor='hand2',
-            width=30,
-            height=2
-        )
-        btn_cargar.pack(pady=10)
-        
-        # Área de logs
-        frame_logs = tk.LabelFrame(
-            frame_principal,
-            text="📝 Registro de operaciones",
-            font=('Arial', 10, 'bold'),
-            bg='#f0f0f0',
-            padx=5,
-            pady=5
-        )
-        frame_logs.pack(fill=tk.BOTH, expand=True)
-        
-        self.txt_logs = scrolledtext.ScrolledText(
-            frame_logs,
-            height=8,
-            font=('Courier', 8),
-            bg='white',
-            relief=tk.SUNKEN,
-            bd=1
-        )
-        self.txt_logs.pack(fill=tk.BOTH, expand=True)
-        
-        # Inicializar logs
-        self.log("Aplicación iniciada. Seleccione PDFs para comenzar.")
-    
-    def log(self, mensaje):
-        """Agrega un mensaje al área de logs"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.txt_logs.insert(tk.END, f"[{timestamp}] {mensaje}\n")
-        self.txt_logs.see(tk.END)
-        self.root.update_idletasks()
-    
-    def seleccionar_pdfs(self):
-        """Abre diálogo para seleccionar múltiples PDFs"""
-        archivos = filedialog.askopenfilenames(
-            title="Seleccionar Facturas PDF",
-            filetypes=[("Archivos PDF", "*.pdf"), ("Todos los archivos", "*.*")]
-        )
-        
-        if archivos:
-            self.pdfs_seleccionados.extend(archivos)
-            self.actualizar_lista_pdfs()
-            self.log(f"{len(archivos)} PDF(s) agregado(s). Total: {len(self.pdfs_seleccionados)}")
-    
-    def actualizar_lista_pdfs(self):
-        """Actualiza la lista visual de PDFs"""
-        self.lista_pdfs.delete(0, tk.END)
-        self.lbl_cantidad_pdfs.config(text=f"{len(self.pdfs_seleccionados)} archivos seleccionados")
-        
-        for pdf in self.pdfs_seleccionados:
-            self.lista_pdfs.insert(tk.END, os.path.basename(pdf))
-    
-    def limpiar_pdfs(self):
-        """Limpia la selección de PDFs"""
-        self.pdfs_seleccionados = []
-        self.lista_pdfs.delete(0, tk.END)
-        self.lbl_cantidad_pdfs.config(text="0 archivos seleccionados")
-        self.log("Lista de PDFs limpiada")
-    
+        self.listbox = tk.Listbox(frame_pdf, font=("Consolas", 10), relief='flat', borderwidth=1, highlightthickness=1)
+        self.listbox.grid(row=1, column=0, sticky="nsew", pady=5)
+
+        # --- PROGRESO Y ACCIÓN ---
+        self.progress = ttk.Progressbar(self.main, orient="horizontal", mode="determinate")
+        self.progress.grid(row=3, column=0, sticky="ew", pady=10)
+
+        self.btn_run = tk.Button(self.main, text="INICIAR PROCESAMIENTO", command=self.iniciar_hilo, 
+                                bg='#e67e22', fg='white', font=("Segoe UI", 12, "bold"), relief='flat', cursor='hand2', pady=12)
+        self.btn_run.grid(row=4, column=0, sticky="ew", pady=10)
+
+        # Log de consola
+        self.txt_log = scrolledtext.ScrolledText(self.main, height=8, font=("Consolas", 9), bg='#ffffff', borderwidth=1)
+        self.txt_log.grid(row=5, column=0, sticky="ew", pady=5)
+
+    def log(self, msj):
+        self.txt_log.insert(tk.END, f"> {msj}\n")
+        self.txt_log.see(tk.END)
+
     def seleccionar_excel(self):
-        """Abre diálogo para seleccionar archivo Excel"""
-        archivo = filedialog.asksaveasfilename(
-            title="Seleccionar/Crear archivo Excel",
-            defaultextension=".xlsx",
-            filetypes=[
-                ("Excel Workbook", "*.xlsx"),
-                ("Excel 97-2003", "*.xls"),
-                ("Todos los archivos", "*.*")
-            ]
-        )
-        
-        if archivo:
-            self.archivo_excel = archivo
-            self.lbl_archivo_excel.config(text=os.path.basename(archivo))
-            self.log(f"Excel seleccionado: {os.path.basename(archivo)}")
-    
+        file = filedialog.askopenfilename(filetypes=[("Excel", "*.xlsx")])
+        if file:
+            self.archivo_excel = file
+            self.lbl_ex.config(text=os.path.basename(file), fg='#2c3e50', font=("Segoe UI", 9, "bold"))
+
+    def seleccionar_pdfs(self):
+        files = filedialog.askopenfilenames(filetypes=[("PDF", "*.pdf")])
+        for f in files:
+            if f not in self.pdfs_seleccionados:
+                self.pdfs_seleccionados.append(f)
+                self.listbox.insert(tk.END, f" 📄 {os.path.basename(f)}")
+
+    def iniciar_hilo(self):
+        if not self.archivo_excel or not self.pdfs_seleccionados:
+            messagebox.showwarning("Atención", "Por favor, selecciona el Excel y los PDF primero.")
+            return
+        # Desactivar botón y arrancar proceso en segundo plano
+        self.btn_run.config(state='disabled', text="PROCESANDO...")
+        threading.Thread(target=self.cargar_datos, daemon=True).start()
+
     def cargar_datos(self):
-        """Procesa los PDFs y carga los datos en Excel"""
-        if not self.pdfs_seleccionados:
-            messagebox.showwarning("Advertencia", "No hay PDFs seleccionados")
-            return
-        
-        if not self.archivo_excel:
-            messagebox.showwarning("Advertencia", "No se ha seleccionado un archivo Excel")
-            return
-        
-        self.log(f"Iniciando procesamiento de {len(self.pdfs_seleccionados)} PDF(s)...")
-        
-        total = len(self.pdfs_seleccionados)
-        datos_extraidos = []
-        
-        for i, pdf in enumerate(self.pdfs_seleccionados, 1):
-            self.log(f"Procesando ({i}/{total}): {os.path.basename(pdf)}")
-            
-            datos = self.extractor.extraer_datos(pdf)
-            datos_extraidos.append(datos)
-            
-            # Actualizar barra de progreso
-            progreso = (i / total) * 100
-            self.barra_progreso['value'] = progreso
-            self.lbl_progreso.config(text=f"Procesando: {i} de {total}")
-            self.root.update_idletasks()
-        
-        # Guardar en Excel
-        try:
-            self.guardar_en_excel(datos_extraidos)
-            self.log("✅ ¡Datos cargados exitosamente!")
-            messagebox.showinfo("Éxito", f"Se procesaron {total} facturas correctamente\nArchivo: {os.path.basename(self.archivo_excel)}")
-        except Exception as e:
-            self.log(f"❌ Error guardando en Excel: {str(e)}")
-            messagebox.showerror("Error", f"No se pudo guardar en Excel: {str(e)}")
-        
-        # Resetear barra
-        self.barra_progreso['value'] = 0
-        self.lbl_progreso.config(text="")
-    
-    def guardar_en_excel(self, datos):
-        """Guarda los datos extraídos en un archivo Excel"""
-        df = pd.DataFrame(datos)
-        
-        # Reordenar columnas
-        columnas_orden = [
-            'archivo', 'tipo_comprobante', 'fecha_emision', 'cuit_emisor',
-            'cuit_cliente', 'punto_venta', 'numero_comprobante',
-            'importe_total', 'neto_gravado', 'iva', 'condicion_iva', 'estado'
-        ]
-        df = df[columnas_orden]
-        
-        # Si el archivo ya existe, intentar agregar datos
+        existentes = set()
         if os.path.exists(self.archivo_excel):
             try:
-                df_existente = pd.read_excel(self.archivo_excel)
-                df = pd.concat([df_existente, df], ignore_index=True)
-            except:
-                pass  # Si falla, simplemente sobrescribe
+                df_old = pd.read_excel(self.archivo_excel, header=None)
+                existentes = set(df_old.iloc[:, 6].astype(str).str.strip().tolist())
+            except: pass
+
+        nuevos_datos = []
+        duplicados = 0
+        total = len(self.pdfs_seleccionados)
+        self.progress["maximum"] = total
         
-        # Guardar
-        df.to_excel(self.archivo_excel, index=False, sheet_name='Facturas')
-        self.log(f"Datos guardados en: {self.archivo_excel}")
+        for i, p in enumerate(self.pdfs_seleccionados):
+            res = self.extractor.extraer_datos(p)
+            
+            if res['cae'] in existentes:
+                self.log(f"Duplicado omitido: {res['comp_nro']}")
+                duplicados += 1
+            else:
+                self.log(f"Procesado con éxito: {res['comp_nro']}")
+                nuevos_datos.append([
+                    res['fecha'], res['comp_nro'], res['cliente'], res['tipo'],
+                    res['servicio'], res['importe'], res['cae'], '', 
+                    res['condicion_venta'], res['archivo_pdf'], res['notas']
+                ])
+            
+            # Actualizar barra desde el hilo
+            self.progress["value"] = i + 1
+            self.root.update_idletasks()
 
+        if nuevos_datos:
+            try:
+                df_nuevo = pd.DataFrame(nuevos_datos)
+                with pd.ExcelWriter(self.archivo_excel, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
+                    sheet_name = writer.book.sheetnames[0]
+                    start_row = writer.book[sheet_name].max_row
+                    df_nuevo.to_excel(writer, index=False, header=False, startrow=start_row, sheet_name=sheet_name)
+                
+                self.log("--- CARGA FINALIZADA CON ÉXITO ---")
+                messagebox.showinfo("Completado", f"Se cargaron {len(nuevos_datos)} facturas.\nOmitidas por duplicado: {duplicados}")
+            except Exception as e:
+                self.log(f"ERROR AL GUARDAR: {e}")
+                messagebox.showerror("Error", "Cierra el Excel antes de procesar.")
+        else:
+            messagebox.showinfo("Fin", f"No se encontraron datos nuevos ({duplicados} duplicados).")
 
-def main():
+        # Resetear interfaz
+        self.btn_run.config(state='normal', text="INICIAR PROCESAMIENTO")
+        self.progress["value"] = 0
+        self.pdfs_seleccionados = []
+        self.listbox.delete(0, tk.END)
+
+if __name__ == "__main__":
     root = tk.Tk()
     app = AplicacionCargador(root)
     root.mainloop()
-
-
-if __name__ == "__main__":
-    main()
