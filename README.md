@@ -69,6 +69,9 @@ Para mantener la simpleza y eficiencia del reporte contable, el sistema captura 
 
 - La aplicación omitirá automáticamente los que ya existan y te dará un reporte final.
 
+## 📥 Descarga
+Si no eres desarrollador, puedes descargar el ejecutable listo para usar desde la sección de [Releases](https://github.com/NicoZdev/AutomatizacionTest/releases).
+
 ## ⚖️ Licencia
 Este proyecto está bajo la Licencia MIT.
 
