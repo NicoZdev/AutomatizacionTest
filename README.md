@@ -1,4 +1,4 @@
-# 📄 Cargador de Facturas - Monotributo Argentina
+## 📄 Cargador de Facturas - Monotributo Argentina
 
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -30,7 +30,7 @@ Para instalar todo usa el comando: pip install -r requirements.txt
 
 Para mantener la simpleza y eficiencia del reporte contable, el sistema captura únicamente los datos esenciales:
 
-### ✅ Datos que SÍ se extraen:
+## ✅ Datos que SÍ se extraen:
 - **Fecha de Emisión:** Formato DD/MM/AAAA.
 - **Número de Comprobante:** Los 8 dígitos principales (ej: 00000056).
 - **Razón Social del Cliente:** Nombre completo (limpiando etiquetas de AFIP).
@@ -40,7 +40,7 @@ Para mantener la simpleza y eficiencia del reporte contable, el sistema captura 
 - **Método de Pago:** Extraído de la condición de venta (ej: Transferencia, Efectivo).
 - **Comprobante Asociado:** Solo en Notas de Crédito (el nro. de factura que anula).
 
-### ❌ Datos que NO se extraen (Ignorados por diseño):
+## ❌ Datos que NO se extraen (Ignorados por diseño):
 - **Detalle de productos/servicios:** No se extrae la lista de ítems, cantidades o precios unitarios.
 - **CUIT del Receptor:** Se prioriza la Razón Social para el listado de clientes.
 - **Domicilio del Cliente:** No se considera relevante para el resumen de facturación.
