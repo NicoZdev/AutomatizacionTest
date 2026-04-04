@@ -2,9 +2,10 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import pdfplumber
 import re
-import pandas as pd
 import os
 import threading
+import gspread # Necesitarás instalarlo: pip install gspread google-auth
+from google.oauth2.service_account import Credentials
 
 class ExtractorFacturas:
     def __init__(self):
@@ -26,7 +27,7 @@ class ExtractorFacturas:
     def extraer_datos(self, ruta_pdf):
         datos = {
             'fecha': '', 'comp_nro': '', 'cliente': 'Consumidor Final',
-            'tipo': 'Factura C', 'servicio': 'Sesión de T.O', 'importe': 0.0,
+            'tipo': 'Factura C', 'servicio': 'Servicio prestado', 'importe': 0.0,
             'cae': '', 'estado': '', 'condicion_venta': '',
             'archivo_pdf': os.path.basename(ruta_pdf),
             'notas': ''
@@ -72,78 +73,59 @@ class ExtractorFacturas:
 class AplicacionCargador:
     def __init__(self, root):
         self.root = root
-        self.root.title("Cargador Contable Pro - v4.0")
+        self.root.title("Cargador Sheets Pro - v4.0")
         self.root.geometry("900x700")
-        self.root.minsize(800, 600)
         self.root.configure(bg='#f8f9fa')
         
         self.pdfs_seleccionados = []
-        self.archivo_excel = ""
+        self.nombre_sheet = "Facturacion" # Nombre del archivo en Google Drive
         self.extractor = ExtractorFacturas()
-        
-        # Hacer que la ventana sea responsiva
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
         
         self.crear_interfaz()
 
     def crear_interfaz(self):
-        # Contenedor principal con padding
         self.main = tk.Frame(self.root, bg='#f8f9fa', padx=30, pady=30)
         self.main.grid(sticky="nsew")
-        self.main.columnconfigure(0, weight=1) # Centrado de contenido
+        self.main.columnconfigure(0, weight=1)
 
-        # Título
-        lbl_titulo = tk.Label(self.main, text="Gestión Automática de Facturas", 
+        lbl_titulo = tk.Label(self.main, text="Carga Directa a Google Sheets", 
                               font=("Segoe UI", 18, "bold"), bg='#f8f9fa', fg='#2c3e50')
         lbl_titulo.grid(row=0, column=0, pady=(0, 20))
 
-        # --- SECCIÓN EXCEL ---
-        frame_excel = tk.LabelFrame(self.main, text=" 1. Destino de datos ", font=("Segoe UI", 10, "bold"), bg='#f8f9fa', padx=15, pady=15)
-        frame_excel.grid(row=1, column=0, sticky="ew", pady=10)
-        frame_excel.columnconfigure(0, weight=1)
-
-        self.btn_excel = tk.Button(frame_excel, text="Seleccionar Archivo Excel", command=self.seleccionar_excel,
-                                   bg='#4a90e2', fg='white', font=("Segoe UI", 10), relief='flat', cursor='hand2', padx=20)
-        self.btn_excel.grid(row=0, column=0)
+        # --- CONFIGURACIÓN SHEET ---
+        frame_conf = tk.LabelFrame(self.main, text=" 1. Configuración Google Sheets ", font=("Segoe UI", 10, "bold"), bg='#f8f9fa', padx=15, pady=15)
+        frame_conf.grid(row=1, column=0, sticky="ew", pady=10)
         
-        self.lbl_ex = tk.Label(frame_excel, text="Ningún Excel seleccionado", bg='#f8f9fa', fg='#7f8c8d', font=("Segoe UI", 9, "italic"))
-        self.lbl_ex.grid(row=1, column=0, pady=(5,0))
+        tk.Label(frame_conf, text="Nombre del archivo Sheets:", bg='#f8f9fa').grid(row=0, column=0, sticky="w")
+        self.ent_sheet = tk.Entry(frame_conf, width=40)
+        self.ent_sheet.insert(0, "Mi Facturacion")
+        self.ent_sheet.grid(row=0, column=1, padx=10)
 
         # --- SECCIÓN PDF ---
         frame_pdf = tk.LabelFrame(self.main, text=" 2. Comprobantes PDF ", font=("Segoe UI", 10, "bold"), bg='#f8f9fa', padx=15, pady=15)
         frame_pdf.grid(row=2, column=0, sticky="nsew", pady=10)
         frame_pdf.columnconfigure(0, weight=1)
-        frame_pdf.rowconfigure(1, weight=1)
 
         self.btn_pdf = tk.Button(frame_pdf, text="+ Agregar Facturas", command=self.seleccionar_pdfs,
                                  bg='#27ae60', fg='white', font=("Segoe UI", 10), relief='flat', cursor='hand2', padx=20)
         self.btn_pdf.grid(row=0, column=0, pady=(0,10))
         
-        self.listbox = tk.Listbox(frame_pdf, font=("Consolas", 10), relief='flat', borderwidth=1, highlightthickness=1)
+        self.listbox = tk.Listbox(frame_pdf, font=("Consolas", 10), height=6)
         self.listbox.grid(row=1, column=0, sticky="nsew", pady=5)
 
-        # --- PROGRESO Y ACCIÓN ---
         self.progress = ttk.Progressbar(self.main, orient="horizontal", mode="determinate")
         self.progress.grid(row=3, column=0, sticky="ew", pady=10)
 
-        self.btn_run = tk.Button(self.main, text="INICIAR PROCESAMIENTO", command=self.iniciar_hilo, 
-                                bg='#e67e22', fg='white', font=("Segoe UI", 12, "bold"), relief='flat', cursor='hand2', pady=12)
+        self.btn_run = tk.Button(self.main, text="INICIAR CARGA A LA NUBE", command=self.iniciar_hilo, 
+                                bg='#4a90e2', fg='white', font=("Segoe UI", 12, "bold"), relief='flat', cursor='hand2', pady=12)
         self.btn_run.grid(row=4, column=0, sticky="ew", pady=10)
 
-        # Log de consola
-        self.txt_log = scrolledtext.ScrolledText(self.main, height=8, font=("Consolas", 9), bg='#ffffff', borderwidth=1)
+        self.txt_log = scrolledtext.ScrolledText(self.main, height=8, font=("Consolas", 9))
         self.txt_log.grid(row=5, column=0, sticky="ew", pady=5)
 
     def log(self, msj):
         self.txt_log.insert(tk.END, f"> {msj}\n")
         self.txt_log.see(tk.END)
-
-    def seleccionar_excel(self):
-        file = filedialog.askopenfilename(filetypes=[("Excel", "*.xlsx")])
-        if file:
-            self.archivo_excel = file
-            self.lbl_ex.config(text=os.path.basename(file), fg='#2c3e50', font=("Segoe UI", 9, "bold"))
 
     def seleccionar_pdfs(self):
         files = filedialog.askopenfilenames(filetypes=[("PDF", "*.pdf")])
@@ -152,63 +134,86 @@ class AplicacionCargador:
                 self.pdfs_seleccionados.append(f)
                 self.listbox.insert(tk.END, f" 📄 {os.path.basename(f)}")
 
+    def conectar_sheets(self):
+        # Asegúrate de que credentials.json esté en la carpeta
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
+        client = gspread.authorize(creds)
+        return client.open(self.ent_sheet.get()).get_worksheet(0)
+
     def iniciar_hilo(self):
-        if not self.archivo_excel or not self.pdfs_seleccionados:
-            messagebox.showwarning("Atención", "Por favor, selecciona el Excel y los PDF primero.")
+        if not self.pdfs_seleccionados:
+            messagebox.showwarning("Atención", "Selecciona los PDF primero.")
             return
-        # Desactivar botón y arrancar proceso en segundo plano
-        self.btn_run.config(state='disabled', text="PROCESANDO...")
+        self.btn_run.config(state='disabled', text="CONECTANDO A GOOGLE...")
         threading.Thread(target=self.cargar_datos, daemon=True).start()
 
+    def mapear_metodo_pago(self, texto):
+        t = texto.upper()
+        if "TRANSFERENCIA" in t: return "Transferencia"
+        if "CONTADO" in t or "EFECTIVO" in t: return "Efectivo" # Mapeo a Efectivo
+        if "DEBITO" in t or "DÉBITO" in t: return "Débito"
+        if "CREDITO" in t or "CRÉDITO" in t: return "Crédito"
+        return "Efectivo"
+
     def cargar_datos(self):
-        existentes = set()
-        if os.path.exists(self.archivo_excel):
-            try:
-                df_old = pd.read_excel(self.archivo_excel, header=None)
-                existentes = set(df_old.iloc[:, 6].astype(str).str.strip().tolist())
-            except: pass
-
-        nuevos_datos = []
-        duplicados = 0
-        total = len(self.pdfs_seleccionados)
-        self.progress["maximum"] = total
-        
-        for i, p in enumerate(self.pdfs_seleccionados):
-            res = self.extractor.extraer_datos(p)
+        try:
+            sheet = self.conectar_sheets()
+            # Obtenemos CAEs para evitar duplicados
+            existentes = set(sheet.col_values(7)) 
             
-            if res['cae'] in existentes:
-                self.log(f"Duplicado omitido: {res['comp_nro']}")
-                duplicados += 1
-            else:
-                self.log(f"Procesado con éxito: {res['comp_nro']}")
-                nuevos_datos.append([
-                    res['fecha'], res['comp_nro'], res['cliente'], res['tipo'],
-                    res['servicio'], res['importe'], res['cae'], '', 
-                    res['condicion_venta'], res['archivo_pdf'], res['notas']
-                ])
+            # Buscamos la fila de inicio basada en la columna B
+            col_b_values = sheet.col_values(2)
+            current_row = len(col_b_values) + 1
             
-            # Actualizar barra desde el hilo
-            self.progress["value"] = i + 1
-            self.root.update_idletasks()
-
-        if nuevos_datos:
-            try:
-                df_nuevo = pd.DataFrame(nuevos_datos)
-                with pd.ExcelWriter(self.archivo_excel, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
-                    sheet_name = writer.book.sheetnames[0]
-                    start_row = writer.book[sheet_name].max_row
-                    df_nuevo.to_excel(writer, index=False, header=False, startrow=start_row, sheet_name=sheet_name)
+            for i, p in enumerate(self.pdfs_seleccionados):
+                res = self.extractor.extraer_datos(p)
                 
-                self.log("--- CARGA FINALIZADA CON ÉXITO ---")
-                messagebox.showinfo("Completado", f"Se cargaron {len(nuevos_datos)} facturas.\nOmitidas por duplicado: {duplicados}")
-            except Exception as e:
-                self.log(f"ERROR AL GUARDAR: {e}")
-                messagebox.showerror("Error", "Cierra el Excel antes de procesar.")
-        else:
-            messagebox.showinfo("Fin", f"No se encontraron datos nuevos ({duplicados} duplicados).")
+                if str(res['cae']) in existentes:
+                    self.log(f"Duplicado omitido: {res['comp_nro']}")
+                else:
+                    self.log(f"Procesando: {res['comp_nro']}")
+                    
+                    # Formateo de datos según tus reglas
+                    tipo_corto = "Nota de Credito C" if "NOTA" in res['tipo'].upper() else "C"
+                    pago_final = self.mapear_metodo_pago(res['condicion_venta'])
+                    
+                    nombre_archivo = os.path.basename(p).strip()
+                    # Fórmula de búsqueda en Drive
+                    formula_pdf = f'=HYPERLINK("https://www.google.com/drive/s?q={nombre_archivo}"; "{nombre_archivo}")'
 
-        # Resetear interfaz
-        self.btn_run.config(state='normal', text="INICIAR PROCESAMIENTO")
+                    # --- CARGA DE BLOQUES ---
+                    
+                    # Bloque Izquierdo (B a G)
+                    # Usamos value_input_option='USER_ENTERED' para que reconozca números y formatos
+                    sheet.update(
+                        range_name=f"B{current_row}:G{current_row}", 
+                        values=[[res['comp_nro'], res['cliente'], tipo_corto, res['servicio'], res['importe'], res['cae']]],
+                        value_input_option='USER_ENTERED'
+                    )
+                    
+                    # Bloque Derecho (I a K)
+                    # Enviamos "" en la última posición para asegurar que Notas (K) quede vacía
+                    sheet.update(
+                        range_name=f"I{current_row}:K{current_row}", 
+                        values=[[pago_final, formula_pdf, ""]], 
+                        value_input_option='USER_ENTERED' # CRITICO: Esto quita el apóstrofe (') de la fórmula
+                    )
+                    
+                    current_row += 1
+                
+                self.progress["value"] = i + 1
+                self.root.update_idletasks()
+
+            self.log("--- CARGA FINALIZADA ---")
+            messagebox.showinfo("Éxito", "Carga completada. Fórmulas activas y notas limpias.")
+
+        except Exception as e:
+            self.log(f"ERROR: {e}")
+            messagebox.showerror("Error", f"Error en la carga: {e}")
+
+        # Reset interfaz
+        self.btn_run.config(state='normal', text="INICIAR CARGA A LA NUBE")
         self.progress["value"] = 0
         self.pdfs_seleccionados = []
         self.listbox.delete(0, tk.END)
@@ -217,4 +222,3 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = AplicacionCargador(root)
     root.mainloop()
-    

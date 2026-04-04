@@ -9,6 +9,10 @@ venv/
 build/
 dist/
 *.spec
+*.exe
 
 # Excel temporales
 ~$*.xlsx
+
+# Google Cloud Credentials (CRÍTICO)
+credentials.json

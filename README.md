@@ -1,80 +1,53 @@
-## 📄 Cargador de Facturas - Monotributo Argentina
+## 📄 Cargador de Facturas Pro - Google Sheets Edition
+Aplicación de escritorio avanzada diseñada para profesionales en Argentina. 
+Automatiza la extracción de datos desde PDFs de AFIP/ARCA (Facturas y Notas de Crédito C) y los sincroniza en tiempo real con Google Sheets.
 
-[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
-Aplicación de escritorio diseñada para profesionales independientes y contadores en Argentina. Automatiza la extracción de datos desde PDFs de AFIP (Facturas y Notas de Crédito C) y los consolida en una planilla de control.
-
-## ✨ Características
-
-- **Extracción Inteligente:** Captura nombres largos (ej. Obras Sociales), importes, CAE y métodos de pago.
-- **Detección de Duplicados:** Evita cargar dos veces el mismo comprobante comparando el número de CAE en tu Excel.
-- **Soporte para Notas de Crédito:** Identifica automáticamente comprobantes asociados y vincula el número de factura original.
-- **Interfaz Responsiva:** UI moderna con barra de progreso y procesamiento en segundo plano (threading) para evitar bloqueos.
-- **Seguridad:** Los datos se procesan localmente; nada se sube a la nube.
-
+## ✨ Características Principales
+- Sincronización Cloud Nativa: Conexión directa con la API de Google Sheets. 
+- No requiere manejo de archivos locales.
+- Mapeo Inteligente de Datos: 
+  - Estandariza métodos de pago: "Transferencia Bancaria" ➔ Transferencia, "Contado/Efectivo" ➔ Efectivo.
+  - Simplifica tipos de comprobante: C o Nota de Credito C.
+  - Hipervínculos Automáticos: Genera una fórmula =HYPERLINK() en la celda del PDF para abrir el archivo en Drive con un clic.
+  - Respeto de Estructura (Smart Fill): Carga datos en los rangos B:G e I:J, saltando automáticamente la columna de Estado (H) y manteniendo limpia la columna de Notas (K).
+  - Prevención de Duplicados: Valida el número de CAE contra la nube antes de subir, evitando registros repetidos.
+  
 ## 📸 Vista Previa
-![Vista Previa de la App](./screenshots/app_v4.png)
 
-## 📋 Requisitos
+## 📋 Requisitos del Sistema
+- Instalación de Librerías
+  pip install pdfplumber gspread google-auth tkinter
+- Configuración de Google Cloud
+  Crea un proyecto en Google Cloud Console.
+  Habilita las APIs de Google Sheets y Google Drive.
+  Crea una Cuenta de Servicio, descarga el JSON de la clave y renombralo a credentials.json.
+    IMPORTANTE: Comparte tu Google Sheet con el email de la cuenta de servicio con permisos de Editor.
+    
+## 📊 Alcance de la Automatización
+Columna - Campo - Lógica de Carga
+A - Fecha - Omitida (Para carga manual)
+B a G - Datos Fiscales - Nro Comp, Cliente, Tipo, Servicio, Importe, CAE
+H - Estado - Saltada (Mantiene tus fórmulas/listas manuales)
+I - Pago - Mapeo automático (Efectivo, Transferencia, etc.)
+J - PDF - Link directo al archivo mediante fórmula
+K - Notas - Se inicializa vacía para aclaraciones manuales
 
-Para instalar todo usa el comando: pip install -r requirements.txt
+## 🚀 Instalación y Desarrollo
+- Clonar el repositorio: 
+  git clone https://github.com/NicoZdev/AutomatizacionTest.git
+  cd AutomatizacionTest
+- Preparar Credenciales: Ubica tu credentials.json en la raíz del proyecto.
+- Ejecutar: 
+  python cargador_facturas.py
 
-- Python 3.8 o superior
-- Librerías necesarias:
-  - `pdfplumber` (Extracción de texto precisa)
-  - `pandas` & `openpyxl` (Gestión de Excel)
-  - `tkinter` (Interfaz gráfica)
+## 📦 Generar Ejecutable (.exe)
+- Debido a optimizaciones de librerías internas (charset-normalizer), se recomienda usar el siguiente comando para evitar errores de módulos faltantes:
+  python -m PyInstaller --noconfirm --onefile --windowed --collect-all charset_normalizer --name "CargadorFacturas_v4" cargador_facturas.py
 
-## 📊 Alcance de la Extracción
-
-Para mantener la simpleza y eficiencia del reporte contable, el sistema captura únicamente los datos esenciales:
-
-## ✅ Datos que SÍ se extraen:
-- **Fecha de Emisión:** Formato DD/MM/AAAA.
-- **Número de Comprobante:** Los 8 dígitos principales (ej: 00000056).
-- **Razón Social del Cliente:** Nombre completo (limpiando etiquetas de AFIP).
-- **Tipo de Comprobante:** Diferenciación entre "Factura C" y "Nota de Crédito C".
-- **Importe Total:** Valor numérico final del comprobante.
-- **CAE:** Código de Autorización Electrónico (usado para control de duplicados).
-- **Método de Pago:** Extraído de la condición de venta (ej: Transferencia, Efectivo).
-- **Comprobante Asociado:** Solo en Notas de Crédito (el nro. de factura que anula).
-
-## ❌ Datos que NO se extraen (Ignorados por diseño):
-- **Detalle de productos/servicios:** No se extrae la lista de ítems, cantidades o precios unitarios.
-- **CUIT del Receptor:** Se prioriza la Razón Social para el listado de clientes.
-- **Domicilio del Cliente:** No se considera relevante para el resumen de facturación.
-- **Fechas de vencimiento o períodos:** Solo se toma la fecha de emisión del documento.
-- **Logos o códigos de barras:** El sistema es exclusivamente de extracción de texto.
-
-## ⚠️ Limitaciones Importantes
-- **Documentos Originales:** Solo funciona con PDFs "nacidos digitales" de ARCA/AFIP. No procesa escaneos ni fotos (sin OCR).
-- **Reglas de Negocio:** Optimizado para el diseño de facturas vigente a 2026. Cambios estructurales en los PDFs de AFIP/ARCA podrían requerir actualizaciones en los patrones de RegEx.
-- **Exclusividad:** Soporta únicamente el modelo de Factura C y Nota de Crédito C (Monotributo).
-
-## 🚀 Instalación
-
-1. **Clonar y entrar al directorio:**
-   ```bash
-   git clone [https://github.com/NicoZdev/AutomatizacionTest.git](https://github.com/NicoZdev/AutomatizacionTest.git)
-   cd AutomatizacionTest/contabilidad_app
-
-## 📖 Cómo usar
-
-- Selecciona tu archivo Excel de control.
-
-- Arrastra o selecciona las facturas PDF (puedes seleccionar muchas a la vez).
-
-- Haz clic en INICIAR PROCESAMIENTO.
-
-- La aplicación omitirá automáticamente los que ya existan y te dará un reporte final.
+## 📥 Descargas
+Si no eres desarrollador, puedes descargar la última versión estable desde la sección de Releases.
+Nota: El archivo credentials.json debe estar en la misma carpeta que el ejecutable.
 
 ## ⚖️ Licencia
 Este proyecto está bajo la Licencia MIT.
-
-## ❓ Preguntas Frecuentes (FAQ)
-
-**¿Por qué Windows detecta el .exe como virus?** Al ser un ejecutable creado con Python y no estar firmado con un certificado de desarrollador pago, algunos antivirus pueden dar un "falso positivo". Es seguro añadirlo a exclusiones.
-
-**¿Qué pasa si el programa no reconoce el comando 'pyinstaller' para generar un .exe?** Asegúrate de tener Python en el PATH de Windows o utiliza el comando:  
-`python -m PyInstaller --noconsole --onefile main.py`
+Desarrollado como solución integral para la gestión de software contable en Argentina.
