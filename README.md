@@ -14,7 +14,7 @@ Automatiza la extracción de datos desde PDFs de AFIP/ARCA (Facturas y Notas de 
   
 ## 📸 Vista Previa
 
-![Screenshot de la App](screenshots/app_v4.png)
+![Screenshot de la App](Screenshots/app_v4.png)
 
 ## 📋 Requisitos del Sistema
 - Instalación de Librerías
